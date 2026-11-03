@@ -25,16 +25,54 @@ Agent skills (for Claude Code and other agents that read `SKILL.md` skills) that
 
 ## Screenshots
 
-<!-- TODO(screenshots): the repo has no image assets yet. Add a photo of a PDF open on the tablet
-     and the all-pages contact sheet that make_article.mjs prints, then replace this comment. -->
+**Send a link, and the agent does the rest.** It builds the PDF, checks every page, uploads it, restarts the tablet UI once, and confirms that the article arrived:
 
-_TODO: add a photo of an article on the tablet and a page contact sheet._
+<p align="center">
+  <img src="docs/images/how-it-work-detail.png" alt="Claude Code session: the user sends an X link, the send-to-remarkable skill builds a 26-page PDF with all 11 images, uploads it to the Articles folder over Wi-Fi and reports PASS" width="720">
+</p>
+
+**The result on the tablet:** an X Article laid out for e-ink, with serif type, a drop cap, the article's images and page numbers:
+
+<p align="center">
+  <img src="docs/images/article-on-remarkable.jpeg" alt="An X Article by Addy Osmani, 'Critical thinking when agents do the work', open on a reMarkable tablet in the journal-style layout" width="480">
+</p>
 
 ## Requirements
 
 - macOS with [Homebrew](https://brew.sh), Node.js 20+, Google Chrome. pandoc is needed for Markdown notes. poppler and ImageMagick are optional (all-page previews).
 - A reMarkable 1 or 2, or a Paper Pro / Paper Pro Move with Developer Mode on. **Enabling Developer Mode factory-resets the tablet**, so back up first.
 - Tested on a reMarkable 2 running software 3.28.
+
+## One-prompt setup
+
+Copy this prompt and send it to your coding agent (Claude Code or another agent that reads `SKILL.md` skills). It installs both skills, walks you through the tablet setup, and sends a test article. Keep the USB cable at hand; the agent asks before each change to your Mac or tablet.
+
+```text
+Set up my Mac so I can send web articles to my reMarkable tablet, using the skills from https://github.com/luongnv89/remarkable-skills. Do every step yourself; stop only when you need me to touch the tablet, plug in the cable, or approve a change.
+
+1. Install the skills:
+   npm install -g agent-skill-manager
+   asm install github:luongnv89/remarkable-skills --all -p claude -s global -y
+   (If you are not Claude Code, pick the matching -p value; run `asm install --help`.)
+2. Install the Node packages of send-to-remarkable by running `npm ci` inside its scripts/ folder
+   (for Claude Code: cd ~/.claude/skills/send-to-remarkable/scripts && npm ci). Do not use --prefix.
+3. Read the remarkable-setup skill's SKILL.md (~/.claude/skills/remarkable-setup/SKILL.md for Claude Code)
+   and follow it step by step: ask me for my tablet model and software version, run the probe,
+   install missing Mac tools, set up the SSH key and the remarkable / remarkable-wifi host aliases,
+   and get key login working over USB and Wi-Fi. Never ask for, store or type the tablet's root password;
+   when it is needed, tell me where to find it and let me type it.
+4. Run `node <send-to-remarkable>/scripts/make_article.mjs --check` and fix anything that is not ready.
+5. Read the send-to-remarkable skill's SKILL.md and use it to send this test article to my tablet:
+   https://paulgraham.com/greatwork.html
+   Tell me when it shows up in the Articles folder.
+6. Ask me whether to add this line to my global agent instructions (~/.claude/CLAUDE.md for Claude Code),
+   and add it only if I say yes:
+   "When I send only a URL to an article, X post or blog post, send it to my reMarkable with the send-to-remarkable skill."
+
+When you finish, give me a short summary of what was set up and how to undo each change.
+```
+
+After that, send the agent a link (for example `https://x.com/user/status/123`) and the article lands in the `Articles` folder on your tablet. If the tablet was asleep, wake it and say "flush the reMarkable queue".
 
 ## Quick start
 
@@ -178,7 +216,9 @@ remarkable-skills/
 │       ├── assets/article.css       # the reader layout
 │       └── evals/                   # evals.json and an Obsidian vault fixture
 ├── .github/                         # issue and pull request templates
-├── docs/OSS_READINESS_CHECKLIST.md
+├── docs/
+│   ├── images/                      # README screenshots
+│   └── OSS_READINESS_CHECKLIST.md
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
