@@ -1,0 +1,106 @@
+{
+  "skill_name": "send-to-remarkable",
+  "harness_note": "Every prompt ends with a test-harness paragraph. {TABLET} is a fresh empty folder standing in for the tablet library, {OUT} the outputs folder. Runs must never contact the real tablet.",
+  "evals": [
+    {
+      "id": 1,
+      "kind": "happy-path",
+      "prompt": "Send this to my remarkable: https://x.com/addyosmani/status/2117512471930167377\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); deliver there instead. Save the PDF in {OUT}.",
+      "expected_output": "An 11-page rM2-sized PDF of 'Critical thinking when agents do the work' with both images, delivered into an Articles folder in the fake tablet after one simulated UI restart, and a report that leads with the outcome.",
+      "files": [],
+      "expectations": [
+        "Process: the run used scripts/make_article.mjs on the X link and its JSON reported ok: true",
+        "The PDF in {OUT} has 9-13 pages and a page size within 1 mm of 157.8 x 210.4 mm",
+        "The PDF text contains 'Critical thinking when agents do the work' and the heading 'Verification as a habit'",
+        "Both article images were saved (images.saved == images.found == 2)",
+        "Process: the fake tablet holds a CollectionType folder named 'Articles' and a DocumentType with the article title whose parent is that folder (written by scripts/push_to_remarkable.mjs)",
+        "Exactly one simulated UI restart was recorded ({TABLET}/.fake-restarts.log has one line)",
+        "The final message states the outcome (delivered to Articles) in its first sentence",
+        "The final message names evidence: the PDF path, page count, and the verified flag",
+        "The final message says what was not checked (how it looks on the device) and states the next action or 'No approval needed'"
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "happy-path",
+      "prompt": "Can you put this blog post on my reMarkable so I can read it tonight? https://addyosmani.com/blog/cognitive-surrender/\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); deliver there instead. Save the PDF in {OUT}.",
+      "expected_output": "A web-article PDF (about 10 pages, cover image kept, link notes) delivered into Articles in the fake tablet.",
+      "files": [],
+      "expectations": [
+        "Process: make_article.mjs reported kind 'web' with more than 2000 words",
+        "The PDF text contains 'Cognitive Surrender' and a 'Links' section with at least 5 numbered URLs",
+        "At least one image was saved and none failed",
+        "Process: the fake tablet holds a DocumentType titled 'Cognitive Surrender' inside a folder named 'Articles'",
+        "Process: the run printed the Build report block (◆ Build) and the Deliver report block (◆ Deliver)",
+        "The final message states the outcome first, names the PDF path and page count, and states the next action or 'No approval needed'"
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "happy-path",
+      "prompt": "Make my note \"{SKILL}/evals/files/vault/notes/Reading notes.md\" readable on my tablet.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); deliver there instead. Save the PDF in {OUT}.",
+      "expected_output": "A 2-page PDF titled 'Reading notes on agent workflows' (front matter title, printed once) with both images (relative path and Obsidian ![[embed]]), table, code, task boxes, delivered to Articles.",
+      "files": ["evals/files/vault/notes/Reading notes.md", "evals/files/vault/notes/loop-diagram.png", "evals/files/vault/attachments/weekly-chart.png"],
+      "expectations": [
+        "Process: make_article.mjs ran on the .md file and reported kind 'file'",
+        "Both images were saved (images.saved == 2), including the ![[weekly-chart.png]] embed found in the vault's attachments folder",
+        "Page 1 text contains the title 'Reading notes on agent workflows' exactly once",
+        "The PDF text contains the task boxes ☐ and ☑ and the table cell 'Comprehension debt'",
+        "Process: the fake tablet holds a DocumentType titled 'Reading notes on agent workflows' in 'Articles'",
+        "The final message states the outcome first and names the PDF path"
+      ]
+    },
+    {
+      "id": 4,
+      "kind": "happy-path",
+      "prompt": "Put this on my reMarkable please https://x.com/ryangrowthh/status/2111080389565640897\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); deliver there instead. Save the PDF in {OUT}.",
+      "expected_output": "The 'Distribution 101' X Article as a PDF with the 𝕏 character intact (no U+FFFD), its ASCII tables as monospace blocks, delivered to Articles.",
+      "files": [],
+      "expectations": [
+        "Process: make_article.mjs reported kind 'x-article' and title 'Distribution 101: A Guide to Reaching Millions'",
+        "The PDF text contains the character 𝕏 and no U+FFFD replacement character",
+        "Process: the fake tablet holds a DocumentType with that title in 'Articles'",
+        "The final message states the outcome first and names the PDF path and page count"
+      ]
+    },
+    {
+      "id": 5,
+      "kind": "edge",
+      "prompt": "Read this on my remarkable later: https://x.com/i/article/2116367635365695488\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); deliver there instead. Save the PDF in {OUT}.",
+      "expected_output": "No PDF and no delivery; the run explains that a bare /i/article/ link cannot be fetched and asks for the link of the post that shares it.",
+      "files": [],
+      "expectations": [
+        "No PDF was written to {OUT}",
+        "The fake tablet contains no DocumentType metadata",
+        "The final message asks for the post link (x.com/<user>/status/<id>) that shares the article",
+        "The run did not try to log in to X or scrape x.com with a browser"
+      ]
+    },
+    {
+      "id": 6,
+      "kind": "edge",
+      "prompt": "Send https://x.com/addyosmani/status/2117512471930167377 to my tablet.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); deliver there instead. It contains the marker file .fake-remarkdown-open, meaning the reMarkdown editor is open on the tablet. Save the PDF in {OUT}.",
+      "expected_output": "The PDF is built, the push refuses to restart the UI (exit 4), the document stays queued, and the user is asked to close reMarkdown and flush later.",
+      "files": [],
+      "expectations": [
+        "Process: push_to_remarkable.mjs exited 4 (reMarkdown open)",
+        "No UI restart happened ({TABLET}/.fake-restarts.log does not exist)",
+        "The fake tablet contains no DocumentType metadata for the article",
+        "The article is in the fake state queue",
+        "The final message says the article is queued, not delivered, and asks the user to close reMarkdown, then flush"
+      ]
+    },
+    {
+      "id": 7,
+      "kind": "negative-trigger",
+      "prompt": "Sync my Obsidian vault's reMarkable folder to the tablet now.\n\nTest harness (not part of the request): do not contact the real reMarkable or run any SSH command. Save any notes in {OUT}.",
+      "expected_output": "Handled as Obsidian two-way sync (the reMarkdown Sync plugin's job), without converting anything to PDF.",
+      "files": [],
+      "expectations": [
+        "The run did not invoke scripts/make_article.mjs or scripts/push_to_remarkable.mjs",
+        "No PDF was produced",
+        "The final message points to the Obsidian plugin's sync (Sync now / status bar) rather than a PDF conversion"
+      ]
+    }
+  ]
+}

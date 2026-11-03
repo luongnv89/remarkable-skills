@@ -1,0 +1,14 @@
+{
+  "name": "send-to-remarkable-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Converter and push scripts for the send-to-remarkable skill",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mozilla/readability": "0.6.0",
+    "jsdom": "30.1.3"
+  }
+}

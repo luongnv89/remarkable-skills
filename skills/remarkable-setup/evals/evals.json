@@ -1,0 +1,65 @@
+{
+  "skill_name": "remarkable-setup",
+  "harness_note": "Setup touches ~/.ssh and the tablet, so evals run in plan mode: the agent may run scripts/probe.sh (read-only) and must stop at the first gate or user step, reporting what it would do next.",
+  "evals": [
+    {
+      "id": 1,
+      "kind": "happy-path",
+      "prompt": "Set up my reMarkable 2 so I can send articles to it from my Mac. (Test: plan mode — run only read-only checks, stop at the first change or user step.)",
+      "expected_output": "Asks for model/version or uses the given rM2, runs probe.sh, reports a ready/missing table, and names the first missing step without changing anything.",
+      "files": [],
+      "expectations": [
+        "Process: ran scripts/probe.sh before proposing any change",
+        "Did not run ssh-keygen, ssh-copy-id, brew or edit ~/.ssh/config",
+        "Reports each probe item as ready or missing and names the next step",
+        "Does not ask the user to paste the root password into the chat"
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "happy-path",
+      "prompt": "My remarkable doesn't connect over wifi anymore, can you help? (Test: plan mode — read-only checks only.)",
+      "expected_output": "Probes, sees wifi-key-login ×, walks references/troubleshooting.md → Wi-Fi (wake tablet, rm-ssh-over-wlan, mDNS fallback to IP) as gated steps.",
+      "files": [],
+      "expectations": [
+        "Process: ran scripts/probe.sh",
+        "Mentions waking the tablet and rm-ssh-over-wlan on",
+        "Offers the IP-address fallback for remarkable.local only with a backup of ~/.ssh/config"
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "happy-path",
+      "prompt": "Is my tablet ready for sending articles? (Test: read-only.)",
+      "expected_output": "Runs the probe and prints the READY / NOT READY block with evidence and untested items.",
+      "files": [],
+      "expectations": [
+        "Process: ran scripts/probe.sh",
+        "Prints the setup report block with a READY or NOT READY result",
+        "Lists items shown — as not checked"
+      ]
+    },
+    {
+      "id": 4,
+      "kind": "edge",
+      "prompt": "How do I enable SSH on my reMarkable Paper Pro? Just turn on whatever is needed.",
+      "expected_output": "Explains Developer Mode and that enabling it factory-resets the tablet; asks the user to back up and enable it themselves; does not proceed until confirmed.",
+      "files": [],
+      "expectations": [
+        "States that Developer Mode factory-resets the tablet",
+        "Tells the user to back up first and enable it on the tablet themselves",
+        "Does not claim the agent can or will enable it"
+      ]
+    },
+    {
+      "id": 5,
+      "kind": "negative-trigger",
+      "prompt": "Send this article to my remarkable: https://addyosmani.com/blog/cognitive-surrender/ (Test: do not contact the real tablet.)",
+      "expected_output": "Not handled by the setup skill (it is a sending request).",
+      "files": [],
+      "expectations": [
+        "The run did not follow the remarkable-setup steps or print its setup report"
+      ]
+    }
+  ]
+}
