@@ -41,7 +41,7 @@ function parseArgs(argv) {
 function check() {
   const rows = [];
   const deps = existsSync(join(HERE, 'node_modules', 'jsdom')) && existsSync(join(HERE, 'node_modules', '@mozilla', 'readability'));
-  rows.push(['node packages', deps, deps ? 'ok' : `missing — run: npm ci --prefix "${HERE}"`]);
+  rows.push(['node packages', deps, deps ? 'ok' : `missing — run: cd "${HERE}" && npm ci`]);
   const chrome = findChrome();
   rows.push(['chrome', !!chrome, chrome || 'missing — install Google Chrome or set CHROME_PATH']);
   const pandoc = which('pandoc');

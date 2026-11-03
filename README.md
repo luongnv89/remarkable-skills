@@ -29,7 +29,7 @@ cd remarkable-skills
 mkdir -p ~/.claude/skills
 ln -s "$PWD/skills/remarkable-setup"   ~/.claude/skills/remarkable-setup
 ln -s "$PWD/skills/send-to-remarkable" ~/.claude/skills/send-to-remarkable
-npm ci --prefix skills/send-to-remarkable/scripts
+(cd skills/send-to-remarkable/scripts && npm ci)
 ```
 
 Other agents: copy or link the `skills/<name>` folders into the agent's skills directory.

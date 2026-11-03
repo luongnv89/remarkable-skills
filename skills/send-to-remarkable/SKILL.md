@@ -4,7 +4,7 @@ description: "Generate a reMarkable-sized PDF from an X article, blog post or lo
 license: MIT
 effort: medium
 metadata:
-  version: 1.0.0
+  version: 1.0.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
@@ -26,7 +26,7 @@ Leading words, used throughout:
 Requires Node 20+, Google Chrome, pandoc (`.md` only) and SSH aliases `remarkable-wifi` / `remarkable` that reach the tablet as root.
 
 1. Run `node "$SCRIPTS/make_article.mjs" --check`.
-2. `node packages: missing` → run `npm ci --prefix "$SCRIPTS"`, then check again.
+2. `node packages: missing` → run `cd "$SCRIPTS" && npm ci` (inside the folder: npm 11 mishandles `--prefix` here), then check again.
 3. Chrome missing → stop and tell the user. pandoc missing (`—`) blocks only `.md` files; never install a tool without asking.
 
 ## Step 1 — Classify the request

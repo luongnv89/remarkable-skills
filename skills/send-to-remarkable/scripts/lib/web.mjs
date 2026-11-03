@@ -15,7 +15,7 @@ export async function loadDeps() {
   } catch {
     fail(
       'the Node packages jsdom and @mozilla/readability are not installed.',
-      `Run: npm ci --prefix "${new URL('..', import.meta.url).pathname}"`,
+      `Run: cd "${new URL('..', import.meta.url).pathname}" && npm ci`,
       1,
     );
   }

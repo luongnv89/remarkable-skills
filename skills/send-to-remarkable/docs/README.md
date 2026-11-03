@@ -43,7 +43,7 @@ graph TD
 /send-to-remarkable https://x.com/addyosmani/status/2117512471930167377
 ```
 
-First run: `npm ci --prefix ~/.claude/skills/send-to-remarkable/scripts` (installs jsdom and Readability). Needs Node 20+, Google Chrome, and pandoc for Markdown files. SSH aliases `remarkable-wifi` / `remarkable` must reach the tablet as root.
+First run: `cd ~/.claude/skills/send-to-remarkable/scripts && npm ci` (installs jsdom and Readability). Needs Node 20+, Google Chrome, and pandoc for Markdown files. SSH aliases `remarkable-wifi` / `remarkable` must reach the tablet as root.
 
 ## Resources
 
