@@ -4,7 +4,7 @@ description: "Generate a reMarkable-sized PDF from an X article, blog post or te
 license: MIT
 effort: medium
 metadata:
-  version: 1.1.0
+  version: 1.1.1
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 

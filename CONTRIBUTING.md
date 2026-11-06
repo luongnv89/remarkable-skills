@@ -178,6 +178,25 @@ RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
   node push_to_remarkable.mjs --flush; echo $?
 # expect: exit 0, the field notes in "delivered" with "folder":"Papers", the forced copy in "skipped"
 # (--force is not kept in the queue), "queued":[], "restarted":true
+
+# a rebuilt PDF with the same title replaces the queued one
+cp "$T"/later/*.pdf "$T/rebuilt.pdf"
+RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
+  node push_to_remarkable.mjs "$T"/later/*.pdf --queue-only --folder Notes
+RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
+  node push_to_remarkable.mjs "$T/rebuilt.pdf" --queue-only --folder Notes; echo $?
+# expect: exit 0, "count":1, "replaced" set to the first path, a Warning: line on stderr
+
+# a 1.0.1 queue holding the same title twice sends the newest PDF once
+Q="$T/tablet.state/queue"; rm -f "$Q"/*.json
+TITLE="Field notes on reading in the margins"
+printf '{"id":"old","pdf":"%s","title":"%s","folder":"Notes","queuedAt":"2026-01-01T00:00:00.000Z"}' "$(ls "$T"/later/*.pdf)" "$TITLE" > "$Q/old.json"
+printf '{"id":"new","pdf":"%s","title":"%s","folder":"Notes","queuedAt":"2026-01-02T00:00:00.000Z"}' "$T/rebuilt.pdf" "$TITLE" > "$Q/new.json"
+echo $(( $(date +%s) - 900 )) > "$T/tablet/.fake-last-start"
+rm -f "$T/tablet.state/restarts.log"   # the two syncs above used this skill's restart budget
+RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
+  node push_to_remarkable.mjs --flush; echo $?
+# expect: exit 0, one item in "delivered" (folder Notes), the older one in "skipped" with "queued twice", "queued":[]
 ```
 
 The fake tablet reads marker files to simulate tablet states. They're listed in [`references/tablet.md` → Fake tablet](skills/send-to-remarkable/references/tablet.md#fake-tablet-tests-and-evals). If you change the push guards, also test `.fake-remarkdown-open` (exit 4) and `.fake-last-start` (exit 5).
@@ -186,7 +205,7 @@ Don't paste machine-specific paths such as `/var/folders/...` into the PR. The `
 
 **4. Evals**
 
-Each skill has an `evals/evals.json` file: `send-to-remarkable` has 12 evals and `remarkable-setup` has 5. Each eval has these fields:
+Each skill has an `evals/evals.json` file: `send-to-remarkable` has 13 evals and `remarkable-setup` has 5. Each eval has these fields:
 
 - `id`
 - `kind`: `happy-path`, `edge` or `negative-trigger`

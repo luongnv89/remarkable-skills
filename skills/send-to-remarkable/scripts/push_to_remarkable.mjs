@@ -10,7 +10,7 @@
 // Every new PDF is queued first, then the whole queue is delivered, so nothing is lost when the tablet is asleep or away.
 // Env: RM_HOSTS (default "remarkable-wifi,remarkable"), RM_FOLDER (default "Articles"),
 //      RM_STATE_DIR (queue + restart log), RM_TABLET_DIR (a local folder used as a fake tablet: no SSH, restart simulated).
-// Exit: 0 done · 2 bad input · 3 queued (tablet offline) · 4 queued (reMarkdown open) · 5 queued (restart limit)
+// Exit: 0 done · 2 bad input · 3 queued (tablet unreachable) · 4 queued (reMarkdown open) · 5 queued (restart limit)
 //       6 uploaded but the UI restart or check failed · 1 other error.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -54,6 +54,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (!args.pdf) args.pdf = a;
   else die(`more than one PDF given (${args.pdf}, ${a})`, 'Push one PDF per call; earlier ones stay queued and go out together.', EXIT.input);
 }
+if (args.pdf && (args.list || args.status)) die(`${args.list ? '--list' : '--status'} takes no PDF (got ${args.pdf})`, `Run node push_to_remarkable.mjs ${args.list ? '--list' : '--status'} on its own; to queue the PDF use: node push_to_remarkable.mjs <file.pdf> --queue-only`, EXIT.input);
 if (!args.pdf && !args.flush && !args.status && !args.list) die('no PDF given', 'Usage: node push_to_remarkable.mjs <file.pdf>  (or --flush / --list / --status)', EXIT.input);
 if (!args.folder || /[\/\n]/.test(args.folder)) die(`invalid folder name "${args.folder}"`, 'Use a single top-level folder name such as Articles (no slashes).', EXIT.input);
 
@@ -234,10 +235,29 @@ function parseListing(out) {
 const live = (m) => m.parent !== 'trash' && m.deleted !== true;
 
 // ---------- queue ----------
+// --queue-only takes no lock, so it can run while a sync does. Queue files are written whole (temp file, then rename),
+// a file that vanishes between listing and reading is skipped, and dequeue() deletes an item only if it is unchanged.
+function readItem(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+function writeItem(file, item) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(item, null, 2));
+  renameSync(tmp, file);
+}
 function readQueue() {
   return readdirSync(QUEUE)
     .filter((f) => f.endsWith('.json'))
-    .map((f) => ({ file: join(QUEUE, f), ...JSON.parse(readFileSync(join(QUEUE, f), 'utf8')) }))
+    .map((f) => {
+      const item = readItem(join(QUEUE, f));
+      return item && { file: join(QUEUE, f), ...item };
+    })
+    .filter(Boolean)
     .sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
 }
 function enqueue(pdf, title, folder) {
@@ -251,7 +271,7 @@ function enqueue(pdf, title, folder) {
   if (existing) {
     if (existing.pdf !== abs) {
       const { file, ...item } = existing;
-      writeFileSync(file, JSON.stringify({ ...item, pdf: abs }, null, 2));
+      writeItem(file, { ...item, pdf: abs, queuedAt: new Date().toISOString() });
       say(`Warning: "${name}" was already queued for ${folder}; the queue now sends ${abs} instead of ${existing.pdf}`);
       existing.replaced = existing.pdf;
       existing.pdf = abs;
@@ -259,10 +279,20 @@ function enqueue(pdf, title, folder) {
     return existing;
   }
   const item = { id: randomUUID(), pdf: abs, title: name, folder, queuedAt: new Date().toISOString() };
-  writeFileSync(join(QUEUE, item.id + '.json'), JSON.stringify(item, null, 2));
+  writeItem(join(QUEUE, item.id + '.json'), item);
   return item;
 }
-const dequeue = (item) => rmSync(item.file || join(QUEUE, item.id + '.json'), { force: true });
+// Remove an item this run handled, unless a --queue-only call replaced its PDF meanwhile: then keep it for the next sync.
+function dequeue(item) {
+  const file = item.file || join(QUEUE, item.id + '.json');
+  const now = readItem(file);
+  if (!now) return;
+  if (now.pdf !== item.pdf) {
+    say(`Warning: "${item.title}" was re-queued with ${now.pdf} during this run, so it stays queued; the next sync skips it if that title is already in ${item.folder} (add --force to send the newer copy)`);
+    return;
+  }
+  rmSync(file, { force: true });
+}
 
 function recentRestarts() {
   const f = join(STATE, 'restarts.log');
@@ -390,18 +420,17 @@ function main() {
     if (found.length > 1) say(`Warning: ${found.length} top-level folders are named "${name}"; using the most recently modified one`);
     return (folderIds[name] = found[0]?.uuid || null);
   };
+  // The same title queued twice for one folder (a queue written by 1.0.1) is sent once: the newest PDF wins.
+  // todo is in queuedAt order, so the last item per key is the newest; upload order stays the queue order.
+  const keyOf = (q) => `${q.folder}\n${q.title}`;
+  const newest = new Map(todo.map((q) => [keyOf(q), q]));
   const plan = [];
-  const planned = new Set();
   for (const q of todo) {
     const fid = findFolder(q.folder);
-    const key = `${q.folder}\n${q.title}`;
     const dup = fid && lib.find((m) => live(m) && m.type === 'DocumentType' && m.parent === fid && m.visibleName === q.title);
     if (dup && !args.force) plan.push({ q, action: 'skip', why: `already in ${q.folder} (document ${dup.uuid})` });
-    else if (planned.has(key)) plan.push({ q, action: 'skip', why: `queued twice; sent once to ${q.folder}` });
-    else {
-      planned.add(key);
-      plan.push({ q, action: 'upload' });
-    }
+    else if (newest.get(keyOf(q)) !== q) plan.push({ q, action: 'skip', why: `queued twice; the newer PDF is sent to ${q.folder}` });
+    else plan.push({ q, action: 'upload' });
   }
   const newFolders = [...new Set(plan.filter((p) => p.action === 'upload' && !folderIds[p.q.folder]).map((p) => p.q.folder))];
   if (args.dry)

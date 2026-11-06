@@ -10,6 +10,18 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 - Open-source project files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`, issue and pull request templates, and `docs/OSS_READINESS_CHECKLIST.md`.
 
+## send-to-remarkable 1.1.1 - 2026-11-06
+
+### Added
+
+- Eval 13 (re-queuing a rebuilt PDF reports what it replaced) and two smoke-test steps in `CONTRIBUTING.md` for a replaced queue item and a same-title queue written by 1.0.1.
+
+### Fixed
+
+- A queue written by 1.0.1 holding the same title twice for one folder now sends the newest PDF. It used to send the oldest.
+- `--queue-only` can no longer lose a PDF that it re-queues while a sync is running. A sync removes a queue item only if its PDF is unchanged, and queue files are written whole.
+- `--list` and `--status` reject a PDF argument (exit 2) instead of ignoring it.
+
 ## send-to-remarkable 1.1.0 - 2026-11-06
 
 ### Added
