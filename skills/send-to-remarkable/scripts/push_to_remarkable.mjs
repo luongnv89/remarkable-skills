@@ -2,11 +2,12 @@
 // push_to_remarkable.mjs — put PDFs into the reMarkable library over SSH, then restart the UI once.
 //
 //   node push_to_remarkable.mjs <file.pdf> [--title T] [--folder Articles] [--hosts a,b] [--no-restart] [--force] [--dry-run]
-//   node push_to_remarkable.mjs <file.pdf> --title T --queue-only   queue only (batches: queue each, then one --flush)
-//   node push_to_remarkable.mjs --flush        send whatever is queued
+//   node push_to_remarkable.mjs <file.pdf> --queue-only   queue without contacting the tablet (send later, or a batch), then one --flush
+//   node push_to_remarkable.mjs --flush        sync: send whatever is queued, each item to its own folder, in one UI restart
+//   node push_to_remarkable.mjs --list         offline: what is queued; never contacts the tablet
 //   node push_to_remarkable.mjs --status       read-only: queue, reachability, guards
 //
-// Every new PDF is queued first, then the whole queue is delivered, so nothing is lost when the tablet is asleep.
+// Every new PDF is queued first, then the whole queue is delivered, so nothing is lost when the tablet is asleep or away.
 // Env: RM_HOSTS (default "remarkable-wifi,remarkable"), RM_FOLDER (default "Articles"),
 //      RM_STATE_DIR (queue + restart log), RM_TABLET_DIR (a local folder used as a fake tablet: no SSH, restart simulated).
 // Exit: 0 done · 2 bad input · 3 queued (tablet offline) · 4 queued (reMarkdown open) · 5 queued (restart limit)
@@ -32,7 +33,7 @@ function die(what, fix, code = EXIT.error) {
 const say = (m) => process.stderr.write(m + '\n');
 
 // ---------- arguments ----------
-const args = { pdf: null, title: null, folder: process.env.RM_FOLDER || 'Articles', hosts: (process.env.RM_HOSTS || 'remarkable-wifi,remarkable').split(',').map((s) => s.trim()).filter(Boolean), restart: true, force: false, dry: false, flush: false, status: false };
+const args = { pdf: null, title: null, folder: process.env.RM_FOLDER || 'Articles', hosts: (process.env.RM_HOSTS || 'remarkable-wifi,remarkable').split(',').map((s) => s.trim()).filter(Boolean), restart: true, force: false, dry: false, flush: false, status: false, list: false };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -45,14 +46,15 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--flush') args.flush = true;
   else if (a === '--queue-only') args.queueOnly = true;
   else if (a === '--status') args.status = true;
+  else if (a === '--list') args.list = true;
   else if (a === '-h' || a === '--help') {
-    process.stdout.write('Usage: node push_to_remarkable.mjs <file.pdf> [--title T] [--folder Articles] [--hosts a,b] [--no-restart] [--force] [--dry-run] [--queue-only]\n       node push_to_remarkable.mjs --flush | --status\n');
+    process.stdout.write('Usage: node push_to_remarkable.mjs <file.pdf> [--title T] [--folder Articles] [--hosts a,b] [--no-restart] [--force] [--dry-run] [--queue-only]\n       node push_to_remarkable.mjs --flush | --list | --status\n');
     process.exit(0);
   } else if (a.startsWith('--')) die(`unknown option ${a}`, 'Run with --help to see the options.', EXIT.input);
   else if (!args.pdf) args.pdf = a;
   else die(`more than one PDF given (${args.pdf}, ${a})`, 'Push one PDF per call; earlier ones stay queued and go out together.', EXIT.input);
 }
-if (!args.pdf && !args.flush && !args.status) die('no PDF given', 'Usage: node push_to_remarkable.mjs <file.pdf> --title "Title"  (or --flush / --status)', EXIT.input);
+if (!args.pdf && !args.flush && !args.status && !args.list) die('no PDF given', 'Usage: node push_to_remarkable.mjs <file.pdf>  (or --flush / --list / --status)', EXIT.input);
 if (!args.folder || /[\/\n]/.test(args.folder)) die(`invalid folder name "${args.folder}"`, 'Use a single top-level folder name such as Articles (no slashes).', EXIT.input);
 
 const FAKE = process.env.RM_TABLET_DIR ? resolve(process.env.RM_TABLET_DIR) : null;
@@ -168,13 +170,14 @@ if [ -n "$pid" ] && grep -q xovi /proc/$pid/maps 2>/dev/null; then echo xovi=1; 
 
 class FakeTablet {
   // Marker files in the fake folder simulate tablet states for tests: .fake-offline, .fake-remarkdown-open,
-  // .fake-remarkdown-opens-later, .fake-last-start, .fake-xovi-lost
+  // .fake-remarkdown-opens-later, .fake-last-start, .fake-xovi-lost. Each connection attempt adds a line to .fake-probes.log.
   constructor(dir) {
     this.dir = dir;
     this.label = `fake tablet ${dir}`;
     mkdirSync(dir, { recursive: true });
   }
   probe() {
+    appendFileSync(join(this.dir, '.fake-probes.log'), new Date().toISOString() + '\n');
     return !existsSync(join(this.dir, '.fake-offline'));
   }
   guards() {
@@ -242,9 +245,20 @@ function enqueue(pdf, title, folder) {
   if (!existsSync(abs)) die(`PDF not found: ${pdf}`, 'Pass the path printed by make_article.mjs (the "pdf" field).', EXIT.input);
   const head = readFileSync(abs).subarray(0, 5).toString('latin1');
   if (head !== '%PDF-') die(`${pdf} is not a PDF file`, 'Pass a .pdf produced by make_article.mjs.', EXIT.input);
-  const existing = readQueue().find((q) => q.pdf === abs && q.folder === folder);
-  if (existing) return existing;
-  const item = { id: randomUUID(), pdf: abs, title: cleanName(title || pdfTitle(abs) || abs.split('/').pop().replace(/\.pdf$/i, '')), folder, queuedAt: new Date().toISOString() };
+  const name = cleanName(title || pdfTitle(abs) || abs.split('/').pop().replace(/\.pdf$/i, ''));
+  // One item per document and folder: the same PDF, or the same title rebuilt on another day (the newest PDF wins).
+  const existing = readQueue().find((q) => q.folder === folder && (q.pdf === abs || q.title === name));
+  if (existing) {
+    if (existing.pdf !== abs) {
+      const { file, ...item } = existing;
+      writeFileSync(file, JSON.stringify({ ...item, pdf: abs }, null, 2));
+      say(`Warning: "${name}" was already queued for ${folder}; the queue now sends ${abs} instead of ${existing.pdf}`);
+      existing.replaced = existing.pdf;
+      existing.pdf = abs;
+    }
+    return existing;
+  }
+  const item = { id: randomUUID(), pdf: abs, title: name, folder, queuedAt: new Date().toISOString() };
   writeFileSync(join(QUEUE, item.id + '.json'), JSON.stringify(item, null, 2));
   return item;
 }
@@ -315,16 +329,25 @@ function finish(summary, code) {
   process.exit(code);
 }
 
+const SYNC_LATER = 'Sync when the tablet is nearby and awake (Wi-Fi on, or USB plugged in): node push_to_remarkable.mjs --flush. Any later push while the tablet answers delivers the queue too.';
+
 function main() {
+  if (args.list) {
+    // Offline: reads the Mac-side state only, so it answers instantly while the tablet is away.
+    const queue = readQueue();
+    const pendingRestart = readPending().map((x) => x.title);
+    finish({ ok: true, mode: 'list', count: queue.length, queue: queue.map((q) => ({ id: q.id, title: q.title, folder: q.folder, queuedAt: q.queuedAt, pdf: q.pdf, pdfExists: existsSync(q.pdf) })), pendingRestart, next: queue.length || pendingRestart.length ? SYNC_LATER : 'Nothing is waiting.' }, EXIT.ok);
+  }
   if (args.status) {
     const t = connect();
     const g = t ? t.guards() : null;
     finish({ ok: true, mode: 'status', tablet: t ? t.label : null, reachable: !!t, guards: g, queue: readQueue().map((q) => ({ title: q.title, folder: q.folder, queuedAt: q.queuedAt, pdf: q.pdf })), pendingRestart: readPending().map((x) => x.title), skillRestartsLast10min: recentRestarts().length }, EXIT.ok);
   }
   if (args.queueOnly) {
-    if (!args.pdf) die('--queue-only needs a PDF', 'Usage: node push_to_remarkable.mjs <file.pdf> --title "T" --queue-only, then one --flush for the batch.', EXIT.input);
+    if (!args.pdf) die('--queue-only needs a PDF', 'Usage: node push_to_remarkable.mjs <file.pdf> --queue-only, then one --flush to sync the queue.', EXIT.input);
     const item = enqueue(args.pdf, args.title, args.folder);
-    finish({ ok: true, mode: 'queue-only', queued: readQueue().map((q) => q.title), added: item.title, next: 'Run node push_to_remarkable.mjs --flush once the whole batch is queued.' }, EXIT.ok);
+    const queue = readQueue();
+    finish({ ok: true, mode: 'queue-only', added: item.title, folder: item.folder, count: queue.length, queued: queue.map((q) => q.title), replaced: item.replaced, contacted: false, next: `Nothing was sent. ${SYNC_LATER}` }, EXIT.ok);
   }
   if (!args.dry) lock();
   const fresh = args.pdf ? (args.dry ? { id: 'dry-run', pdf: resolve(args.pdf), title: cleanName(args.title || pdfTitle(resolve(args.pdf)) || args.pdf), folder: args.folder, queuedAt: new Date().toISOString() } : enqueue(args.pdf, args.title, args.folder)) : null;
@@ -341,7 +364,7 @@ function main() {
 
   const t = connect();
   if (!t)
-    finish({ ...base, reason: `tablet not reachable over ${FAKE ? 'the fake tablet folder' : args.hosts.join(', ')}`, next: 'Wake the tablet (press the power button) so Wi-Fi reconnects, or plug in USB, then run: node push_to_remarkable.mjs --flush' }, EXIT.offline);
+    finish({ ...base, reason: `tablet not reachable over ${FAKE ? 'the fake tablet folder' : args.hosts.join(', ')} (asleep, out of range, or not with you)`, next: `${args.pdf ? 'The PDF is queued' : 'The queue is kept'}. Tablet nearby: press its power button so Wi-Fi reconnects (or plug in USB), then run: node push_to_remarkable.mjs --flush. Tablet away: sync when you are back; any later push while the tablet answers delivers the queue too.` }, EXIT.offline);
   base.tablet = t.label;
 
   const g = t.guards();
@@ -358,37 +381,52 @@ function main() {
   if (g.freeKb && g.freeKb < needKb) finish({ ...base, reason: `only ${g.freeKb} KB free on the tablet, ${needKb} KB needed` , next: 'Delete documents on the tablet, then run --flush.' }, EXIT.error);
 
   const lib = t.listMetadata();
-  const folders = lib.filter((m) => live(m) && m.type === 'CollectionType' && m.parent === '' && m.visibleName === args.folder);
-  folders.sort((a, b) => Number(b.lastModified || 0) - Number(a.lastModified || 0));
-  if (folders.length > 1) say(`Warning: ${folders.length} top-level folders are named "${args.folder}"; using the most recently modified one`);
-  let folderId = folders[0]?.uuid || null;
+  // Each queued item goes to the folder it was queued for, so a later sync never moves it to this call's --folder.
+  const folderIds = {};
+  const findFolder = (name) => {
+    if (name in folderIds) return folderIds[name];
+    const found = lib.filter((m) => live(m) && m.type === 'CollectionType' && m.parent === '' && m.visibleName === name);
+    found.sort((a, b) => Number(b.lastModified || 0) - Number(a.lastModified || 0));
+    if (found.length > 1) say(`Warning: ${found.length} top-level folders are named "${name}"; using the most recently modified one`);
+    return (folderIds[name] = found[0]?.uuid || null);
+  };
   const plan = [];
+  const planned = new Set();
   for (const q of todo) {
-    const dup = folderId && lib.find((m) => live(m) && m.type === 'DocumentType' && m.parent === folderId && m.visibleName === q.title);
-    if (dup && !args.force) plan.push({ q, action: 'skip', why: `already in ${args.folder} (document ${dup.uuid})` });
-    else plan.push({ q, action: 'upload' });
+    const fid = findFolder(q.folder);
+    const key = `${q.folder}\n${q.title}`;
+    const dup = fid && lib.find((m) => live(m) && m.type === 'DocumentType' && m.parent === fid && m.visibleName === q.title);
+    if (dup && !args.force) plan.push({ q, action: 'skip', why: `already in ${q.folder} (document ${dup.uuid})` });
+    else if (planned.has(key)) plan.push({ q, action: 'skip', why: `queued twice; sent once to ${q.folder}` });
+    else {
+      planned.add(key);
+      plan.push({ q, action: 'upload' });
+    }
   }
+  const newFolders = [...new Set(plan.filter((p) => p.action === 'upload' && !folderIds[p.q.folder]).map((p) => p.q.folder))];
   if (args.dry)
-    finish({ ...base, ok: true, guards: g, folderExists: !!folderId, plan: plan.map((p) => ({ title: p.q.title, action: p.action, why: p.why })), pendingRestart: pending.map((x) => x.title), willRestart: args.restart && (pending.length > 0 || plan.some((p) => p.action === 'upload')) }, EXIT.ok);
+    finish({ ...base, ok: true, guards: g, folderExists: !!findFolder(args.folder), newFolders, plan: plan.map((p) => ({ title: p.q.title, folder: p.q.folder, action: p.action, why: p.why })), pendingRestart: pending.map((x) => x.title), willRestart: args.restart && (pending.length > 0 || plan.some((p) => p.action === 'upload')) }, EXIT.ok);
 
   // Upload: every file lands as .part first and is renamed only when complete; metadata goes last.
-  if (!folderId && plan.some((p) => p.action === 'upload')) {
-    folderId = randomUUID();
-    const f = folderFiles(args.folder);
-    t.putFile(`${folderId}.content`, f.content);
-    t.putFile(`${folderId}.metadata`, f.metadata);
-    t.commit([`${folderId}.content`, `${folderId}.metadata`]);
-    say(`→ created folder "${args.folder}" (${folderId})`);
+  for (const name of newFolders) {
+    const id = randomUUID();
+    const f = folderFiles(name);
+    t.putFile(`${id}.content`, f.content);
+    t.putFile(`${id}.metadata`, f.metadata);
+    t.commit([`${id}.content`, `${id}.metadata`]);
+    folderIds[name] = id;
+    say(`→ created folder "${name}" (${id})`);
   }
   const uploaded = [];
   for (const p of plan) {
     if (p.action === 'skip') {
-      base.skipped.push({ title: p.q.title, why: p.why });
+      base.skipped.push({ title: p.q.title, folder: p.q.folder, why: p.why });
       dequeue(p.q);
       continue;
     }
     const uuid = randomUUID();
-    const files = docFiles(p.q, folderId);
+    const fid = folderIds[p.q.folder];
+    const files = docFiles(p.q, fid);
     const names = [`${uuid}.pdf`, ...(files.pagedata ? [`${uuid}.pagedata`] : []), `${uuid}.content`, `${uuid}.metadata`];
     try {
       t.putFile(`${uuid}.pdf`, readFileSync(p.q.pdf));
@@ -396,17 +434,17 @@ function main() {
       t.putFile(`${uuid}.content`, files.content);
       t.putFile(`${uuid}.metadata`, files.metadata);
       t.commit(names);
-      uploaded.push({ q: p.q, uuid, pages: files.pages });
-      say(`→ uploaded "${p.q.title}" (${files.pages} pages) as ${uuid}`);
+      uploaded.push({ q: p.q, uuid, pages: files.pages, folderId: fid });
+      say(`→ uploaded "${p.q.title}" (${files.pages} pages) to ${p.q.folder} as ${uuid}`);
     } catch (e) {
       t.abort(names);
-      finish({ ...base, delivered: uploaded.map((u) => ({ title: u.q.title, uuid: u.uuid })), reason: e.message, next: 'Check the connection and run --flush; the queue still holds this document.' }, EXIT.error);
+      finish({ ...base, delivered: uploaded.map((u) => ({ title: u.q.title, folder: u.q.folder, uuid: u.uuid })), reason: e.message, next: 'Check the connection and run --flush; the queue still holds this document.' }, EXIT.error);
     }
   }
   base.queued = [];
 
   // Re-check the guards right before restarting: the uploads take time and the user may have opened reMarkdown meanwhile.
-  const waiting = [...pending, ...uploaded.map((u) => ({ title: u.q.title, uuid: u.uuid, pages: u.pages, folderId }))];
+  const waiting = [...pending, ...uploaded.map((u) => ({ title: u.q.title, uuid: u.uuid, pages: u.pages, folderId: u.folderId }))];
   if (waiting.length && args.restart) {
     const g2 = t.guards();
     if (g2.remarkdownOpen || g2.sinceStart < MIN_UPTIME_S) {
@@ -423,8 +461,8 @@ function main() {
   }
   for (const u of uploaded) {
     const m = t.readMetadata(u.uuid);
-    const ok = m && m.visibleName === u.q.title && m.parent === folderId && live(m);
-    base.delivered.push({ title: u.q.title, uuid: u.uuid, pages: u.pages, verified: !!ok });
+    const ok = m && m.visibleName === u.q.title && m.parent === u.folderId && live(m);
+    base.delivered.push({ title: u.q.title, folder: u.q.folder, uuid: u.uuid, pages: u.pages, verified: !!ok });
     dequeue(u.q);
   }
   for (const w of pending) {
@@ -433,9 +471,10 @@ function main() {
   }
   if (restart) rmSync(PENDING, { force: true });
   const xoviNote = restart ? (restart.xovi ? 'xovi still loaded' : g.xovi ? 'xovi NOT loaded after the restart — triple-press the power button to start it' : 'xovi was not running before') : null;
-  const summary = { ...base, ok: true, folderId, restarted: !!restart, uiActive: restart ? restart.active : null, xovi: xoviNote, note: uploaded.length && !args.restart ? 'uploaded without a UI restart; the documents appear after the next restart or reboot' : undefined };
+  const folders = Object.fromEntries(Object.entries(folderIds).filter(([, id]) => id));
+  const summary = { ...base, ok: true, folderId: folders[args.folder] ?? null, folders, restarted: !!restart, uiActive: restart ? restart.active : null, xovi: xoviNote, note: uploaded.length && !args.restart ? 'uploaded without a UI restart; the documents appear after the next restart or reboot' : undefined };
   if (restart && !restart.active) finish({ ...summary, ok: false, reason: `the UI did not come back after the restart ${restart.err}`, next: 'Look at the tablet. If it shows an error, reboot it; the documents are already on it.' }, EXIT.restart);
-  if (base.delivered.some((d) => !d.verified)) finish({ ...summary, ok: false, reason: 'a document was not found as written after the restart', next: 'Open the Articles folder on the tablet to check; run --status for details.' }, EXIT.restart);
+  if (base.delivered.some((d) => !d.verified)) finish({ ...summary, ok: false, reason: 'a document was not found as written after the restart', next: 'Open the folder named in delivered[].folder on the tablet to check; run --status for details.' }, EXIT.restart);
   finish(summary, EXIT.ok);
 }
 

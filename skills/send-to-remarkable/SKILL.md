@@ -1,23 +1,25 @@
 ---
 name: send-to-remarkable
-description: "Generate a reMarkable-sized PDF from an X article, blog post or local text file and push it to the tablet over SSH. Use when sending something to a reMarkable. Don't use for Obsidian sync, notebook export, or PDF editing."
+description: "Generate a reMarkable-sized PDF from an X article, blog post or text file; push it over SSH now or queue it to sync later. Use when sending to a reMarkable. Don't use for Obsidian sync, notebook export, or PDF editing."
 license: MIT
 effort: medium
 metadata:
-  version: 1.0.1
+  version: 1.1.0
   author: "Luong NGUYEN <luongnv89@gmail.com>"
 ---
 
 # Send to reMarkable
 
-Convert an input into a reader PDF sized to the reMarkable 2 screen and deliver it to the tablet's `Articles` folder. The scripts own every tablet write and the UI restart; never restart the UI yourself.
+Convert an input into a reader PDF sized to the reMarkable 2 screen and deliver it to the tablet's `Articles` folder, now or at a later sync. The scripts own every tablet write and the UI restart; never restart the UI yourself.
 
 Leading words, used throughout:
 
 - **library** — `~/Documents/remarkable-articles/`, the Mac copy of every PDF (`--out <dir>` overrides).
-- **queue** — PDFs waiting for the tablet. A push queues first, then delivers the whole queue in one UI restart.
+- **queue** — PDFs waiting on the Mac for the tablet, each with its folder. A push queues first, then delivers the whole queue in one UI restart.
+- **send later** — the tablet is not with the user: build and check the PDF now, queue it with `--queue-only`, and never contact the tablet.
+- **sync** — deliver the whole queue (`--flush`) in one UI restart. Any push that reaches the tablet syncs the queue too.
 - **UI restart** — `systemctl restart xochitl`, run by the push script. A new document appears only after it.
-- **test run** — the request names a local folder that stands in for the tablet. Then every `push_to_remarkable.mjs` call, `--status` and `--queue-only` included, starts with `RM_TABLET_DIR=<that folder> RM_STATE_DIR=<that folder>.state`, and every build passes `--out <the outputs folder>`. A test run never reaches the real tablet.
+- **test run** — the request names a local folder that stands in for the tablet. Then every `push_to_remarkable.mjs` call, `--list`, `--status` and `--queue-only` included, starts with `RM_TABLET_DIR=<that folder> RM_STATE_DIR=<that folder>.state`, and every build passes `--out <the outputs folder>`. A test run never reaches the real tablet.
 
 `SCRIPTS` is the `scripts/` folder next to this file. Write its absolute path into each command; shell variables do not persist between calls.
 
@@ -39,13 +41,18 @@ Requires Node 20+, Google Chrome, pandoc (`.md` only) and SSH aliases `remarkabl
 | `.md` `.markdown` `.txt` `.html` `.htm` file | Steps 2–5 |
 | `.pdf` file | Steps 2–5. Pass-through: copied as is, its own page size kept |
 | "Just the PDF", "don't send it" | Steps 2–3 and 5 only |
-| Resend, flush, "did it arrive", "what's queued" | Step 4 with `--flush` or `--status` only |
+| Tablet not at hand: "send it later", "just queue it", "my reMarkable isn't with me" | Steps 2–5 as **send later** |
+| "Sync my reMarkable", "send what's queued", "I'm back with my tablet", resend, flush | Step 4 **sync** only (`--flush`) |
+| "What's queued?", "what's waiting for my reMarkable?" | `--list` only: offline, never contacts the tablet |
+| "Did it arrive?", "is the tablet reachable?" | `--status` only |
 | Paper Pro or Move named | Build with `--device rmpp` / `move`; push only once the user confirms that tablet answers at the SSH hosts |
 | Anything else | Stop. Name the supported inputs |
 
+"Read it later" or "for tonight" is a normal send: the reading is later, not the delivery. Use send later only when the user says the tablet is away or asks to hold the document.
+
 Login-only or paywalled pages are not bypassed: ask the user to save the page as `.html` and pass that file.
 
-Several inputs: run Steps 2–3 for each, queue each passing PDF with `--queue-only`, then run one `--flush` (one UI restart). Report every item, including failed ones.
+Several inputs: run Steps 2–3 for each, queue each passing PDF with `--queue-only`, then run one `--flush` (one UI restart); on send later, skip the flush. Report every item, including failed ones.
 
 ## Step 2 — Build the PDF
 
@@ -78,26 +85,27 @@ Done when `ok` is true and `pages` ≥ 1.
 
 ## Step 4 — Deliver
 
-1. Run `node "$SCRIPTS/push_to_remarkable.mjs" "<pdf>"` with the `pdf` path from Step 2. Do not pass `--title`: the script reads the title from the PDF, so web text never passes through a shell.
+1. Run `node "$SCRIPTS/push_to_remarkable.mjs" "<pdf>"` with the `pdf` path from Step 2; on send later, add `--queue-only`. A sync runs `--flush` with no PDF. Do not pass `--title`: the script reads the title from the PDF, so web text never passes through a shell.
 2. Read `exit` from the stdout JSON. Exits 1 and 2 may print only `Error:`/`Fix:` lines on stderr.
 
 | Exit | Meaning | Tell the user |
 | --- | --- | --- |
-| 0 | Delivered (`delivered[]`), already there (`skipped[]`), or queued by `--queue-only` | Folder, title, `verified`, the `xovi` note, any `note` |
-| 3 | Tablet unreachable; queued | Wake the tablet, then flush; still failing → `references/tablet.md` |
-| 4 | reMarkdown open; queued, or uploaded with the restart skipped (`uploaded[]`) | Close reMarkdown (Esc, then Esc in the file picker), then flush |
-| 5 | Restart budget used up; queued | The time in `next`; flush after it |
+| 0 | Delivered (`delivered[]`, each with its folder) or already there (`skipped[]`) | Folder, title, `verified`, the `xovi` note, any `note` |
+| 0, `mode: queue-only` | Send later: queued; the tablet was not contacted | Queued, not delivered; `count` waiting; say "sync my reMarkable" when the tablet is nearby and awake. `replaced` set → name the older PDF it replaced (same title, same folder) |
+| 3 | Tablet unreachable (asleep or away); queued | Nearby → wake it, then sync. Away → sync when back. Troubleshoot (`references/tablet.md`) only when the user says it is awake and in reach |
+| 4 | reMarkdown open; queued, or uploaded with the restart skipped (`uploaded[]`) | Close reMarkdown (Esc, then Esc in the file picker), then sync |
+| 5 | Restart budget used up; queued | The time in `next`; sync after it |
 | 6 | The UI was down, or did not come back after the restart | Look at the tablet; `references/tablet.md` |
 | 1, 2 | Error | The `reason`/`Error` and `next`/`Fix` text |
 
-3. Exits 3, 4 and 5 are not failures: the PDF waits. Do not retry them in this run; when the user asks later, run `--flush`.
+3. Send later and exits 3, 4 and 5 are not failures: the PDF waits in the queue. Do not retry them in this run; sync when the user asks. A later push that reaches the tablet delivers the queue too.
 4. Pass `--force` only when the user asks for a second copy, `--no-restart` only when they ask not to restart. Unsure what a push will do? `--dry-run` shows the plan and writes nothing.
-5. Print the deliver report:
+5. Print the deliver report (on a sync, one `Uploaded` line per document):
 
 ```
 ◆ Deliver (step 4)
-  Tablet:     √ <tablet>, guards ok | × <reason> — queued
-  Uploaded:   √ "<title>" → <folder> | — already there | × queued
+  Tablet:     √ <tablet>, guards ok | × <reason> — queued | — not contacted (send later)
+  Uploaded:   √ "<title>" → <folder> | — already there | × queued (<count> waiting)
   UI restart: √ back up, <xovi note> | — not needed | × skipped
   Verified:   √ metadata intact after restart
   Result:     PASS | QUEUED | FAIL
@@ -105,9 +113,9 @@ Done when `ok` is true and `pages` ≥ 1.
 
 ## Step 5 — Report to the user
 
-First sentence: the outcome — on the tablet, queued (and why), or failed. Then the evidence (PDF path, pages, size, images saved/found, `verified`, `xovi` note), what was not checked (the look on the tablet screen; warnings), and the next user action or "No approval needed."
+Open the final message with one sentence stating the outcome — on the tablet, queued (why, and how many wait), or failed — before the Build and Deliver blocks. Then the evidence (PDF path, pages, size, images saved/found, `verified`, `xovi` note), what was not checked (the look on the tablet screen; warnings), and the next user action or "No approval needed." A queued outcome ends with how to sync: say "sync my reMarkable" when the tablet is nearby and awake.
 
-Expected output (example):
+Expected output, one example per outcome:
 
 ```
 "Critical thinking when agents do the work" is in Articles on your reMarkable.
@@ -115,11 +123,19 @@ PDF ~/Documents/remarkable-articles/2026-11-03-critical-thinking-….pdf — 11 
 verified after the UI restart, xovi still loaded. Not checked: how it reads on the tablet. No approval needed.
 ```
 
+```
+"Reading notes on agent workflows" is queued for your reMarkable (2 documents waiting); the tablet was not contacted.
+PDF ~/Documents/remarkable-articles/2026-11-06-reading-notes-on-agent-workflows.pdf — 3 pages, 157.6 × 210.2 mm, 2/2 images.
+Not checked: delivery. Next: say "sync my reMarkable" when the tablet is nearby and awake.
+```
+
 ## Acceptance criteria
 
 - A delivered run has `ok: true` from both scripts, a Build result of PASS or PARTIAL, and `verified: true` in the push JSON.
-- A queued run (exit 3, 4, 5) says "queued", names the reason, and gives the flush step; it never claims delivery.
-- Edge cases verified in `evals/evals.json`: a bare `/i/article/` link stops before building; reMarkdown open → exit 4 with no restart; 𝕏 and emoji print without `��`; an Obsidian sync request does not trigger this skill.
+- A queued run (send later, exit 3, 4, 5) says "queued", names the reason and the number waiting, and says how to sync; it never claims delivery.
+- A send-later run calls the push script only with `--queue-only`: no `--status`, no connection, no UI restart.
+- A sync delivers every queued item to its own folder in one UI restart and leaves the queue empty.
+- Edge cases verified in `evals/evals.json`: a bare `/i/article/` link stops before building; reMarkdown open → exit 4 with no restart; 𝕏 and emoji print without `��`; send later never contacts the tablet; "read it later" still delivers now; an Obsidian sync request does not trigger this skill.
 
 ## Self-Improve
 
@@ -141,4 +157,4 @@ Optional and propose-only. After the run's result is delivered, run this check:
 
 - `references/sources.md` — extraction wrong or incomplete; per-source limits.
 - `references/layout.md` — a failed page check; another font size, device or link style.
-- `references/tablet.md` — a failed push, the guards, the queue, removing a pushed document.
+- `references/tablet.md` — a failed push, the guards, the queue and syncing later, removing a pushed document.
