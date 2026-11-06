@@ -10,6 +10,25 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 - Open-source project files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`, issue and pull request templates, and `docs/OSS_READINESS_CHECKLIST.md`.
 
+## send-to-remarkable 1.1.0 - 2026-11-06
+
+### Added
+
+- Send later: when the tablet is not at hand ("send it later", "my reMarkable isn't with me"), the skill builds and checks the PDF now and queues it with `--queue-only`, without contacting the tablet. "Sync my reMarkable" delivers the whole queue later, in one UI restart.
+- `push_to_remarkable.mjs --list` shows the queue from the Mac, without contacting the tablet.
+- The fake tablet logs each connection attempt to `.fake-probes.log`.
+- 5 evals for sending later, syncing, a tablet out of reach, the offline queue list, and "read it later" wording (12 in total), plus the `evals/files/field-notes.txt` fixture.
+
+### Changed
+
+- Exit 3 (tablet unreachable) reads as a deferral: wake a nearby tablet, or sync when you are back. "Read it later" still delivers now.
+- `--queue-only` reports `count` and `contacted: false`; `delivered[]`, `skipped[]` and the `--dry-run` plan name each item's folder.
+
+### Fixed
+
+- A sync delivers each queued item to the folder it was queued for. It used to put every item in the folder of the current call.
+- The same article queued twice, for example rebuilt on another day, is sent once instead of twice.
+
 ## send-to-remarkable 1.0.1 - 2026-11-03
 
 ### Fixed

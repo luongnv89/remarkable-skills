@@ -21,6 +21,7 @@ Agent skills (for Claude Code and other agents that read `SKILL.md` skills) that
 - **Local notes**, including Obsidian `![[image]]` embeds, plus `.txt`, saved `.html` and `.pdf` files.
 - **A reader layout** made for e-ink: the exact panel size (reMarkable 2 by default; Paper Pro and Paper Pro Move as options), serif type, every image kept, links turned into numbered notes, and headings as a PDF outline.
 - **Safe delivery over SSH**: one UI restart per batch; never while the reMarkdown editor is open; within the tablet's own restart limit; queued while the tablet sleeps; checked after the restart.
+- **Send now or sync later**: away from your tablet? The PDF is built and checked now and waits in a queue on your Mac. Say "sync my reMarkable" when the tablet is back.
 - **Gated setup**: every change to your Mac or the tablet is explained and needs your yes. The agent never asks for, stores or types the tablet's root password.
 
 ## Screenshots
@@ -72,7 +73,7 @@ Set up my Mac so I can send web articles to my reMarkable tablet, using the skil
 When you finish, give me a short summary of what was set up and how to undo each change.
 ```
 
-After that, send the agent a link (for example `https://x.com/user/status/123`) and the article lands in the `Articles` folder on your tablet. If the tablet was asleep, wake it and say "flush the reMarkable queue".
+After that, send the agent a link (for example `https://x.com/user/status/123`) and the article lands in the `Articles` folder on your tablet. If the tablet was asleep or away, the article waits in a queue: say "sync my reMarkable" once the tablet is nearby and awake.
 
 ## Quick start
 
@@ -135,9 +136,10 @@ Other agents: copy or link the `skills/<name>` folders into the agent's skills d
 
 1. Run `/remarkable-setup` once (or ask "set up my reMarkable so I can send articles to it").
 2. Send things: "send this to my reMarkable: https://x.com/user/status/123", "put this blog post on my tablet", "make ~/notes/today.md readable on my reMarkable".
-3. If the tablet was asleep, the PDF waits in a queue: wake the tablet and say "flush the reMarkable queue".
+3. Not near your tablet? Say "send it later" (for example "my reMarkable isn't with me, queue this: https://…"). The PDF is built and checked now and queued on your Mac; the tablet is not contacted. A send while the tablet is asleep or out of reach is queued the same way.
+4. When the tablet is nearby and awake, say "sync my reMarkable". Everything queued goes over in one UI restart, each document to the folder it was queued for. Your next send while the tablet is reachable also delivers the queue.
 
-Other requests the skills handle: "just make the PDF, don't send it", "what's queued for my reMarkable?", "is my tablet ready for sending articles?".
+Other requests the skills handle: "just make the PDF, don't send it", "what's waiting for my reMarkable?" (answered from the Mac, without contacting the tablet), "is my tablet ready for sending articles?".
 
 ### Running the scripts directly
 
@@ -150,10 +152,12 @@ node "$S/make_article.mjs" https://example.com/some-post            # build a PD
 node "$S/make_article.mjs" ~/notes/today.md --device rmpp           # Paper Pro page size
 node "$S/make_article.mjs" https://example.com/js-heavy --render    # render the page in headless Chrome first
 
-node "$S/push_to_remarkable.mjs" ~/Documents/remarkable-articles/<file>.pdf --dry-run   # plan only, writes nothing
-node "$S/push_to_remarkable.mjs" ~/Documents/remarkable-articles/<file>.pdf             # queue, upload, one UI restart
+node "$S/push_to_remarkable.mjs" ~/Documents/remarkable-articles/<file>.pdf --dry-run      # plan only, writes nothing
+node "$S/push_to_remarkable.mjs" ~/Documents/remarkable-articles/<file>.pdf                # queue, upload, one UI restart
+node "$S/push_to_remarkable.mjs" ~/Documents/remarkable-articles/<file>.pdf --queue-only   # send later: queue, never contacts the tablet
+node "$S/push_to_remarkable.mjs" --list      # offline: what is queued
 node "$S/push_to_remarkable.mjs" --status    # read-only: reachability, guards, queue
-node "$S/push_to_remarkable.mjs" --flush     # send what is queued
+node "$S/push_to_remarkable.mjs" --flush     # sync: send what is queued, one UI restart
 
 bash ~/.claude/skills/remarkable-setup/scripts/probe.sh   # read-only readiness check, exit 0 when ready
 ```
@@ -171,11 +175,11 @@ No config file. Defaults suit most setups; these environment variables change th
 | `CHROME_PATH` | `lib/common.mjs` | auto-detect | Browser binary for headless printing and rendering. Used only if the path exists; otherwise Chrome, Chromium, Edge and Brave in `/Applications` (and Chrome in `~/Applications`), then `PATH`, are tried. |
 | `FXTWITTER_API` | `lib/x.mjs` | `https://api.fxtwitter.com` | Base URL of the FxTwitter API used for X links. |
 | `RM_HOSTS` | `push_to_remarkable.mjs` | `remarkable-wifi,remarkable` | SSH host aliases to try, in order. Flag: `--hosts a,b`. |
-| `RM_FOLDER` | `push_to_remarkable.mjs` | `Articles` | Top-level tablet folder (no slashes). Flag: `--folder`. |
+| `RM_FOLDER` | `push_to_remarkable.mjs` | `Articles` | Top-level tablet folder (no slashes). Queued PDFs keep the folder they were queued with. Flag: `--folder`. |
 | `RM_STATE_DIR` | `push_to_remarkable.mjs` | `~/Library/Application Support/send-to-remarkable` | Queue, pending restarts, restart log and lock. Defaults to `<RM_TABLET_DIR>.state` when a fake tablet is set. |
 | `RM_TABLET_DIR` | `push_to_remarkable.mjs` | unset | Use a local folder as a fake tablet: no SSH, restart simulated. For tests and evals. |
 
-Other flags: `make_article.mjs` takes `--render` and `--no-notes` (no numbered link notes); `push_to_remarkable.mjs` takes `--title`, `--force` (upload a second copy), `--no-restart` and `--queue-only`. `probe.sh` takes `--key` (default `~/.ssh/id_ed25519_remarkable`), `--usb` (default `remarkable`) and `--wifi` (default `remarkable-wifi`). Run any script with `--help`.
+Other flags: `make_article.mjs` takes `--render` and `--no-notes` (no numbered link notes); `push_to_remarkable.mjs` takes `--title`, `--force` (upload a second copy), `--no-restart`, `--queue-only` (send later) and `--list` (show the queue offline). `probe.sh` takes `--key` (default `~/.ssh/id_ed25519_remarkable`), `--usb` (default `remarkable`) and `--wifi` (default `remarkable-wifi`). Run any script with `--help`.
 
 ## How delivery works
 
@@ -184,11 +188,16 @@ The tablet's UI (`xochitl`) only reads its library at start. The push script wri
 - the reMarkdown editor is not open (a restart would lose its unsaved text);
 - the UI has not been restarted too often (xochitl allows 4 starts in 10 minutes before the tablet's failure handler can reboot it).
 
+Every push queues the PDF on the Mac first. When the tablet is asleep or away, or you asked to send later, the PDF stays in the queue until a sync delivers the whole queue in one UI restart.
+
 ```mermaid
 graph TD
     A["Classify input: X / web / file / PDF"] --> B["make_article.mjs: extract, download images, print PDF in Chrome"]
     B --> C["Check the page sheet"]
     C --> D["push_to_remarkable.mjs: queue, guards, upload, one UI restart"]
+    C --> L["Send later: queue only, tablet not contacted"]
+    L --> S["Later: sync delivers the whole queue"]
+    S --> D
     D --> E["Verify on tablet and report"]
 ```
 
@@ -229,7 +238,7 @@ remarkable-skills/
 ## Documentation
 
 - `remarkable-setup`: [overview](skills/remarkable-setup/docs/README.md) · [troubleshooting](skills/remarkable-setup/references/troubleshooting.md)
-- `send-to-remarkable`: [overview](skills/send-to-remarkable/docs/README.md) · [sources](skills/send-to-remarkable/references/sources.md) (how each input is read) · [layout](skills/send-to-remarkable/references/layout.md) (page sizes, fixing a bad page) · [tablet](skills/send-to-remarkable/references/tablet.md) (push protocol, exit codes, fake tablet)
+- `send-to-remarkable`: [overview](skills/send-to-remarkable/docs/README.md) · [sources](skills/send-to-remarkable/references/sources.md) (how each input is read) · [layout](skills/send-to-remarkable/references/layout.md) (page sizes, fixing a bad page) · [tablet](skills/send-to-remarkable/references/tablet.md) (push protocol, sending later and syncing, exit codes, fake tablet)
 - [CHANGELOG.md](CHANGELOG.md): changes per skill version
 
 ## Contributing

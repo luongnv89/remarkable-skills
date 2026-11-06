@@ -161,6 +161,23 @@ RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
 RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
   node push_to_remarkable.mjs --status
 # expect: "reachable":false and the queued PDF in "queue"
+
+# send later, then sync
+node make_article.mjs ../evals/files/field-notes.txt --out "$T/later"
+RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
+  node push_to_remarkable.mjs "$T"/later/*.pdf --queue-only --folder Papers; echo $?
+# expect: exit 0, "mode":"queue-only", "contacted":false, "count":2
+
+RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
+  node push_to_remarkable.mjs --list
+# expect: both PDFs in "queue", each with its folder; no new line in "$T/tablet/.fake-probes.log"
+
+rm "$T/tablet/.fake-offline"
+echo $(( $(date +%s) - 600 )) > "$T/tablet/.fake-last-start"   # the UI started 10 min ago
+RM_TABLET_DIR="$T/tablet" RM_STATE_DIR="$T/tablet.state" \
+  node push_to_remarkable.mjs --flush; echo $?
+# expect: exit 0, the field notes in "delivered" with "folder":"Papers", the forced copy in "skipped"
+# (--force is not kept in the queue), "queued":[], "restarted":true
 ```
 
 The fake tablet reads marker files to simulate tablet states. They're listed in [`references/tablet.md` → Fake tablet](skills/send-to-remarkable/references/tablet.md#fake-tablet-tests-and-evals). If you change the push guards, also test `.fake-remarkdown-open` (exit 4) and `.fake-last-start` (exit 5).
@@ -169,7 +186,7 @@ Don't paste machine-specific paths such as `/var/folders/...` into the PR. The `
 
 **4. Evals**
 
-Each skill has an `evals/evals.json` file: `send-to-remarkable` has 7 evals and `remarkable-setup` has 5. Each eval has these fields:
+Each skill has an `evals/evals.json` file: `send-to-remarkable` has 12 evals and `remarkable-setup` has 5. Each eval has these fields:
 
 - `id`
 - `kind`: `happy-path`, `edge` or `negative-trigger`
@@ -177,11 +194,12 @@ Each skill has an `evals/evals.json` file: `send-to-remarkable` has 7 evals and 
 - `expected_output`
 - `files`
 - `expectations`
+- `setup` (optional): shell commands to run before the prompt, for example to queue PDFs for a sync eval
 
 No eval runner is checked in, so run evals by hand:
 
 1. Start a fresh agent session with the skill installed.
-2. Paste the eval prompt. For `send-to-remarkable`, replace `{TABLET}` and `{OUT}` with empty temp folders, as the file's `harness_note` says.
+2. For `send-to-remarkable`, replace `{SKILL}` with the skill folder and `{TABLET}`, `{OUT}` and `{FIXTURES}` with empty temp folders, as the file's `harness_note` says. Run the eval's `setup` commands, if any, then paste the eval prompt.
 3. Check each item in `expectations`.
 
 Keep these in mind:

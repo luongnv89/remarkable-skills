@@ -1,6 +1,6 @@
 {
   "skill_name": "send-to-remarkable",
-  "harness_note": "Every prompt ends with a test-harness paragraph. {TABLET} is a fresh empty folder standing in for the tablet library, {OUT} the outputs folder. Runs must never contact the real tablet.",
+  "harness_note": "Every prompt ends with a test-harness paragraph. {SKILL} is this skill's folder, {TABLET} a fresh empty folder standing in for the tablet library, {OUT} the outputs folder, {FIXTURES} a scratch folder for PDFs built by setup. Run an eval's optional `setup` commands in order before sending the prompt. Runs must never contact the real tablet.",
   "evals": [
     {
       "id": 1,
@@ -100,6 +100,97 @@
         "The run did not invoke scripts/make_article.mjs or scripts/push_to_remarkable.mjs",
         "No PDF was produced",
         "The final message points to the Obsidian plugin's sync (Sync now / status bar) rather than a PDF conversion"
+      ]
+    },
+    {
+      "id": 8,
+      "kind": "happy-path",
+      "prompt": "My reMarkable isn't with me today. Queue my note \"{SKILL}/evals/files/vault/notes/Reading notes.md\" so I can sync it to the tablet when I'm back home.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); use it in place of the tablet. Save the PDF in {OUT}.",
+      "expected_output": "A 3-page rM2 PDF of 'Reading notes on agent workflows' is built and checked, then queued with --queue-only. The fake tablet is never contacted (no probe, no document, no restart), and the report says queued, how many wait, and how to sync later.",
+      "files": ["evals/files/vault/notes/Reading notes.md", "evals/files/vault/notes/loop-diagram.png", "evals/files/vault/attachments/weekly-chart.png"],
+      "expectations": [
+        "Process: make_article.mjs ran on the .md file and reported ok: true",
+        "Process: every push_to_remarkable.mjs call used --queue-only or --list; no plain push, --flush or --status",
+        "The fake tablet was never contacted: {TABLET}/.fake-probes.log does not exist and {TABLET} holds no DocumentType metadata",
+        "No UI restart happened ({TABLET}/.fake-restarts.log does not exist)",
+        "The fake state queue ({TABLET}.state/queue) holds one item titled 'Reading notes on agent workflows'",
+        "The final message says the note is queued, not delivered, in its first sentence",
+        "The final message tells the user how to sync later (for example: say 'sync my reMarkable' when the tablet is nearby)",
+        "The final message names its evidence (the PDF path and page count) and says what was not checked (delivery to the tablet)"
+      ]
+    },
+    {
+      "id": 9,
+      "kind": "happy-path",
+      "prompt": "I'm back home and my reMarkable is next to me. Sync everything that's waiting for it.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); use it in place of the tablet. {TABLET}.state holds the queue: the setup queued two PDFs, one for Articles and one for Papers. Save any files in {OUT}.",
+      "setup": [
+        "node \"{SKILL}/scripts/make_article.mjs\" \"{SKILL}/evals/files/vault/notes/Reading notes.md\" --out \"{FIXTURES}\"",
+        "node \"{SKILL}/scripts/make_article.mjs\" \"{SKILL}/evals/files/field-notes.txt\" --out \"{FIXTURES}\"",
+        "RM_TABLET_DIR=\"{TABLET}\" RM_STATE_DIR=\"{TABLET}.state\" node \"{SKILL}/scripts/push_to_remarkable.mjs\" \"{FIXTURES}\"/*-reading-notes-on-agent-workflows.pdf --queue-only",
+        "RM_TABLET_DIR=\"{TABLET}\" RM_STATE_DIR=\"{TABLET}.state\" node \"{SKILL}/scripts/push_to_remarkable.mjs\" \"{FIXTURES}\"/*-field-notes-on-reading-in-the-margins.pdf --queue-only --folder Papers"
+      ],
+      "expected_output": "One --flush delivers both queued PDFs, 'Reading notes on agent workflows' into Articles and 'Field notes on reading in the margins' into Papers, after one simulated UI restart. The queue ends empty and the report lists both.",
+      "files": ["evals/files/field-notes.txt"],
+      "expectations": [
+        "Process: push_to_remarkable.mjs ran with --flush and exited 0",
+        "Process: make_article.mjs did not run (the PDFs were already queued)",
+        "The fake tablet holds 'Reading notes on agent workflows' in a folder named 'Articles' and 'Field notes on reading in the margins' in a folder named 'Papers'",
+        "Exactly one simulated UI restart was recorded ({TABLET}/.fake-restarts.log has one line)",
+        "The fake state queue ({TABLET}.state/queue) is empty after the run",
+        "The final message states the delivery in its first sentence and names both documents with their folders"
+      ]
+    },
+    {
+      "id": 10,
+      "kind": "edge",
+      "prompt": "Send \"{SKILL}/evals/files/field-notes.txt\" to my reMarkable.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); use it in place of the tablet. It contains the marker file .fake-offline, meaning the tablet does not answer. {TABLET}.state already holds one queued PDF. Save the PDF in {OUT}.",
+      "setup": [
+        "mkdir -p \"{TABLET}\" && touch \"{TABLET}/.fake-offline\"",
+        "node \"{SKILL}/scripts/make_article.mjs\" \"{SKILL}/evals/files/vault/notes/Reading notes.md\" --out \"{FIXTURES}\"",
+        "RM_TABLET_DIR=\"{TABLET}\" RM_STATE_DIR=\"{TABLET}.state\" node \"{SKILL}/scripts/push_to_remarkable.mjs\" \"{FIXTURES}\"/*-reading-notes-on-agent-workflows.pdf --queue-only"
+      ],
+      "expected_output": "The PDF is built and checked, the push exits 3, both documents stay queued, and the report says queued (2 waiting) and how to sync later, without troubleshooting the connection.",
+      "files": ["evals/files/field-notes.txt"],
+      "expectations": [
+        "Process: push_to_remarkable.mjs ran on the new PDF without --queue-only and exited 3 (tablet unreachable)",
+        "The fake tablet holds no DocumentType metadata and no .fake-restarts.log",
+        "The fake state queue holds 2 items: 'Field notes on reading in the margins' and 'Reading notes on agent workflows'",
+        "The run did not retry the push, run --flush or --status, or run ssh commands after exit 3",
+        "The final message says queued, not delivered, in its first sentence, says that 2 documents wait, and says how to sync later"
+      ]
+    },
+    {
+      "id": 11,
+      "kind": "edge",
+      "prompt": "What's still waiting to go to my reMarkable? I don't have it with me.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); use it in place of the tablet. It contains the marker file .fake-offline. {TABLET}.state holds the queue. Save any files in {OUT}.",
+      "setup": [
+        "mkdir -p \"{TABLET}\" && touch \"{TABLET}/.fake-offline\"",
+        "node \"{SKILL}/scripts/make_article.mjs\" \"{SKILL}/evals/files/vault/notes/Reading notes.md\" --out \"{FIXTURES}\"",
+        "node \"{SKILL}/scripts/make_article.mjs\" \"{SKILL}/evals/files/field-notes.txt\" --out \"{FIXTURES}\"",
+        "RM_TABLET_DIR=\"{TABLET}\" RM_STATE_DIR=\"{TABLET}.state\" node \"{SKILL}/scripts/push_to_remarkable.mjs\" \"{FIXTURES}\"/*-reading-notes-on-agent-workflows.pdf --queue-only",
+        "RM_TABLET_DIR=\"{TABLET}\" RM_STATE_DIR=\"{TABLET}.state\" node \"{SKILL}/scripts/push_to_remarkable.mjs\" \"{FIXTURES}\"/*-field-notes-on-reading-in-the-margins.pdf --queue-only --folder Papers"
+      ],
+      "expected_output": "The run answers from the Mac with --list: both queued titles with their folders, and how to sync later. No connection attempt, nothing built or delivered.",
+      "files": [],
+      "expectations": [
+        "Process: push_to_remarkable.mjs ran with --list; no --status, --flush or plain push",
+        "No connection attempt: {TABLET}/.fake-probes.log does not exist",
+        "make_article.mjs did not run and no PDF was written to {OUT}",
+        "The final message names both queued titles ('Reading notes on agent workflows', 'Field notes on reading in the margins') and says how to sync when the tablet is back"
+      ]
+    },
+    {
+      "id": 12,
+      "kind": "edge",
+      "prompt": "Put my note \"{SKILL}/evals/files/vault/notes/Reading notes.md\" on my reMarkable, I want to read it later tonight.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); use it in place of the tablet. Save the PDF in {OUT}.",
+      "expected_output": "A normal send, not send later: the PDF is built and delivered now into Articles in the fake tablet after one simulated UI restart.",
+      "files": ["evals/files/vault/notes/Reading notes.md", "evals/files/vault/notes/loop-diagram.png", "evals/files/vault/attachments/weekly-chart.png"],
+      "expectations": [
+        "Process: push_to_remarkable.mjs ran on the PDF without --queue-only and exited 0",
+        "The fake tablet holds a DocumentType titled 'Reading notes on agent workflows' in a folder named 'Articles'",
+        "Exactly one simulated UI restart was recorded ({TABLET}/.fake-restarts.log has one line)",
+        "The fake state queue ({TABLET}.state/queue) is empty after the run",
+        "The final message states delivery (not queued) in its first sentence"
       ]
     }
   ]
