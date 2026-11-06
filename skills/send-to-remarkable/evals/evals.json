@@ -192,6 +192,24 @@
         "The fake state queue ({TABLET}.state/queue) is empty after the run",
         "The final message states delivery (not queued) in its first sentence"
       ]
+    },
+    {
+      "id": 13,
+      "kind": "edge",
+      "prompt": "I updated my note \"{SKILL}/evals/files/field-notes.txt\". My reMarkable isn't with me, so queue the new version for later.\n\nTest harness (not part of the request): do not contact the real reMarkable. The folder {TABLET} stands in for the tablet's document library (/home/root/.local/share/remarkable/xochitl); use it in place of the tablet. {TABLET}.state already holds an older PDF of this note in the queue. Save the PDF in {OUT}.",
+      "setup": [
+        "node \"{SKILL}/scripts/make_article.mjs\" \"{SKILL}/evals/files/field-notes.txt\" --out \"{FIXTURES}\"",
+        "RM_TABLET_DIR=\"{TABLET}\" RM_STATE_DIR=\"{TABLET}.state\" node \"{SKILL}/scripts/push_to_remarkable.mjs\" \"{FIXTURES}\"/*-field-notes-on-reading-in-the-margins.pdf --queue-only"
+      ],
+      "expected_output": "The note is rebuilt into {OUT} and queued with --queue-only. The queue still holds one item for that title, now pointing at the new PDF, and the report says the new PDF replaced the older queued one, without contacting the tablet.",
+      "files": ["evals/files/field-notes.txt"],
+      "expectations": [
+        "Process: make_article.mjs ran on field-notes.txt with --out {OUT} and reported ok: true",
+        "Process: push_to_remarkable.mjs ran with --queue-only and its JSON line has \"replaced\" set to the PDF under {FIXTURES}",
+        "The fake tablet was never contacted: {TABLET}/.fake-probes.log does not exist",
+        "The fake state queue ({TABLET}.state/queue) holds exactly one item, titled 'Field notes on reading in the margins', whose pdf is under {OUT}",
+        "The final message says queued, not delivered, and names the older PDF that the new one replaced"
+      ]
     }
   ]
 }
